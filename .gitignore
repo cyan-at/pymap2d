@@ -6,3 +6,4 @@ CMap2D.so
 *.so
 *egg-info/
 dist/
+*.npy
