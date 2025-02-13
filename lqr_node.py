@@ -18,14 +18,6 @@ from tf2_ros.transform_listener import TransformListener
 from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Twist
 
-# LQR parameter
-lqr_Q = np.eye(5)
-
-lqr_Q[4, 4] = 0.1 # speed de-prioritized vs position
-
-lqr_R = np.eye(2)
-L = 0.36  # Wheel base of the vehicle [m]
-dt = 0.1
 terminate_ticks = 100
 target_v = 0.2
 
