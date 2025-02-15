@@ -21,6 +21,8 @@ from geometry_msgs.msg import Twist
 terminate_ticks = 100
 target_v = 0.2
 
+from std_srvs.srv import Empty, Trigger
+
 class LQRNode(Node):
     def __init__(self):
         super().__init__('lqr_node')
