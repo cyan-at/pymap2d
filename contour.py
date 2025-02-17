@@ -187,7 +187,7 @@ def sample_sdf(
 
 def contour_step(
     sdf_data,
-    iterations = 100):
+    iterations = 50):
     sdf_map = sdf_data["sdf_map"]
     # sdf_map_backup = sdf_data["map"]
     g_map_basefootprint = sdf_data["g_map_basefootprint"]
