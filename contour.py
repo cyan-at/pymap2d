@@ -188,13 +188,14 @@ def sample_sdf(
 def contour_step(
     sdf_data,
     iterations = 100):
-    sdf_map = sdf_data["map"]
-    sdf_map_backup = sdf_data["map"]
+    sdf_map = sdf_data["sdf_map"]
+    # sdf_map_backup = sdf_data["map"]
     g_map_basefootprint = sdf_data["g_map_basefootprint"]
     # print("g_map_basefootprint", g_map_basefootprint[:, 2])
     last_xytheta = sdf_data["latest_xytheta"]
     data = sdf_data["msg"]
     (m1, m2) = sdf_data["range"]
+    occupancy = sdf_data["map"]
 
     r = data.info.resolution
 
@@ -219,6 +220,21 @@ def contour_step(
 
     x_max = x_min + rotated_im_w
     y_max = y_min + rotated_im_h
+
+    def func(t):
+        if t < 0:
+            return 50
+        else:
+            return t
+    vfunc = np.vectorize(func)
+    occupancy = vfunc(occupancy)
+
+    # occupancy, _ = rotate(occupancy, 180)
+    # occupancy = occupancy.T
+    occupancy = np.flip(occupancy, 0)
+    occupancy = occupancy.astype(np.int8)
+
+    ################################
 
     _, _, yaw = euler_from_quaternion([
         data.info.origin.orientation.x,
@@ -270,10 +286,10 @@ def contour_step(
             r2, samplings,
             A_tile, sdf_map)
 
-        xys_3, sdf_sampling_3 = sample_sdf(
-            hom,
-            r3, samplings,
-            A_tile, sdf_map)
+        # xys_3, sdf_sampling_3 = sample_sdf(
+        #     hom,
+        #     r3, samplings,
+        #     A_tile, sdf_map)
 
         ################################
 
@@ -328,6 +344,8 @@ def contour_step(
             [tmp2[0, 2], tmp2[1, 2]]
             ])
 
+        unknown_found = False
+
         # this adds some perturbations
         # keeps it from limit-cycling exactly
         r = 5
@@ -335,15 +353,29 @@ def contour_step(
             for v in range(uv1[1] - r, uv1[1] + r):
                 if v >= sdf_map.shape[0] or u >= sdf_map.shape[1]:
                     continue
+                # if v < 0 or u < 0:
+                #     print("b", v, u)
+                #     continue
 
-                if v < 0 or u < 0:
-                    continue
+                try:
+                    sdf_map[v, u] -= 1.0
 
-                sdf_map[v, u] -= 1.0
+                    # print(occupancy[v, u])
+                    if occupancy[v, u] == 50:
+                        unknown_found = True
+                except:
+                    print("index problem")
 
         hom = tmp2
 
+        # print("DIST!", np.linalg.norm(hom[:2, 2] - all_homs[-1][:2, 2], ord=2))
+
+        if unknown_found:
+            print("UNKNOWN FOUND!", iteration)
+            break
+
         all_homs.append(hom)
+
         last_thetas.append(best_theta)
 
     return all_homs, last_thetas
@@ -356,17 +388,17 @@ if __name__ == '__main__':
     with open(args.file, 'rb') as f:
         sdf_map = np.load(f, allow_pickle=True)
 
-
     all_homs, last_thetas = contour_step(sdf_map.tolist())
 
     tmp = sdf_map.tolist()
-    sdf_map = tmp["map"]
-    sdf_map_backup = tmp["map"]
+    sdf_map = tmp["sdf_map"]
+    # sdf_map_backup = tmp["map"]
     g_map_basefootprint = tmp["g_map_basefootprint"]
     # print("g_map_basefootprint", g_map_basefootprint[:, 2])
     last_xytheta = tmp["latest_xytheta"]
     data = tmp["msg"]
     (m1, m2) = tmp["range"]
+    occupancy = tmp["map"]
 
     r = data.info.resolution
 
@@ -393,7 +425,23 @@ if __name__ == '__main__':
     x_max = x_min + rotated_im_w
     y_max = y_min + rotated_im_h
 
-    # import ipdb; ipdb.set_trace()
+    ################################
+
+    # turn it from uint8 back to meters
+    def func(t):
+        if t < 0:
+            return 50
+        else:
+            return t
+    vfunc = np.vectorize(func)
+    occupancy = vfunc(occupancy)
+
+    # occupancy, _ = rotate(occupancy, 180)
+    # occupancy = occupancy.T
+    occupancy = np.flip(occupancy, 0)
+    occupancy = occupancy.astype(np.int8)
+
+    ################################
 
     _, _, yaw = euler_from_quaternion([
         data.info.origin.orientation.x,
@@ -596,14 +644,22 @@ if __name__ == '__main__':
 
     ################################
 
-    im_handle = ax3.imshow(sdf_map, alpha=0.5)
+    # im_handle = ax3.imshow(sdf_map, alpha=0.1)
+    # im_handle.set_extent([
+    #     min([x_min, g_world_map[0, 2]]),
+    #     x_max,
+    #     min([y_min, g_world_map[1, 2]]),
+    #     y_max
+    # ])
 
-    im_handle.set_extent([
+    im_handle2 = ax3.imshow(occupancy, alpha=0.9, cmap='gray')
+    im_handle2.set_extent([
         min([x_min, g_world_map[0, 2]]),
         x_max,
         min([y_min, g_world_map[1, 2]]),
         y_max
     ])
+
 
     ################################
 
