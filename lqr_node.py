@@ -83,6 +83,12 @@ class LQRNode(Node):
               '/lqr_step2',
               rclpy.qos.qos_profile_parameters)
 
+        self.active_path = None
+        self.active_path_pub = self.create_publisher(
+              Path,
+              '/active_plan',
+              rclpy.qos.qos_profile_parameters)
+
     def rtn_vel_cb(self, msg):
         with self.rtn_lock:
             self.state.v = msg.linear.x
@@ -92,7 +98,9 @@ class LQRNode(Node):
             self.xythetas = path_to_xytheta(msg)
 
         # reset
-        if self.sem_counter < 1:
+        if self.sem_counter < 1 and self.latest_xytheta is not None:
+            self.active_path = msg
+
             self.sim_state = State(
                 x=self.latest_xytheta[0],
                 y=self.latest_xytheta[1],
@@ -174,6 +182,8 @@ class LQRNode(Node):
             xythetas = None
             with self.path_lock:
                 xythetas = self.xythetas
+
+            self.active_path_pub.publish(self.active_path)
 
             self.get_logger().warn("xythetas shape: {}".format(
                 xythetas.shape))
