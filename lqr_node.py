@@ -40,7 +40,7 @@ class LQRNode(Node):
         self.sem1 = threading.Semaphore(1)
 
         self.create_subscription(
-            Path,
+            Twist,
             '/gen2_base_controller/rtn_vel',
             self.rtn_vel_cb,
             rclpy.qos.qos_profile_parameters,
