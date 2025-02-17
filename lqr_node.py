@@ -18,7 +18,6 @@ from tf2_ros.transform_listener import TransformListener
 from rcl_interfaces.msg import SetParametersResult
 from geometry_msgs.msg import Twist
 
-terminate_ticks = 100
 target_v = 0.2
 
 from std_srvs.srv import Empty, Trigger
@@ -188,60 +187,56 @@ class LQRNode(Node):
             self.get_logger().warn("xythetas shape: {}".format(
                 xythetas.shape))
 
-            xs = interpolate(xythetas[:, 0], 10)
-            ys = interpolate(xythetas[:, 1], 10)
-            yaws = interpolate(xythetas[:, 2], 10)
+            ############################
+
+            xs = interpolate(xythetas[:, 0], 40)
+            ys = interpolate(xythetas[:, 1], 40)
+
+            # INTERPOATION ROTAIONS SUCKS!
+            yaws = [(x + np.pi) % (2 * np.pi) - np.pi for x in xythetas[:, 2]]
+            yaws = rotation_smooth(yaws)
+            # this is key
+            # interpolating between -3.14 and 3.14 through 0 is spatially wrong
+            yaws = interpolate(yaws, 40)
+
+            ############################
 
             ticks = 0
             start = time.time()
 
-            while ticks < terminate_ticks:
-                dl, idx, self.state.e, self.state.e_th, ai = lqr_speed_steering_control(
+            t = 0.0
+            distance_traveled = 0.0
+            distances = [] # len(cx) - 1
+            cumsums = [0.0] # len(cx)
+            i = 0
+            pt = np.array([xs[i], ys[i]])
+            while i < len(xs) - 1:
+                new_pt = np.array([xs[i+1], ys[i+1]])
+                dist = np.linalg.norm(new_pt - pt, ord=2)
+                distances.append(dist)
+                cumsums.append(cumsums[-1] + dist)
+                i += 1
+                pt = new_pt
+            cumsums = np.array(cumsums)
+
+            xys = [self.latest_xytheta[:2]]
+            prior_dl = 0.0
+
+            r2 = 0.5 # from contour.py
+
+            while distance_traveled < r2 * max(1, len(xythetas) - 1):
+                dl, idx, self.state.e, self.state.e_th, ai, _, _ = lqr_speed_steering_control(
                     self.state, self.state.e, self.state.e_th,
                     dt,
                     xs, ys, yaws,
-                    lqr_Q, lqr_R, L, target_v)
-
-                dist = np.linalg.norm(
-                    self.latest_xytheta[:2] - np.array([xs[idx], ys[idx]]),
-                    ord=2)
-
-                # self.get_logger().warn("xy (%.3f, %.3f, %.3f), path_xy (%.3f, %.3f, %.3f), dist=%.3f" % (
-                #     self.state.x, self.state.y, self.state.yaw,
-                #     xs[idx], ys[idx], yaws[idx],
-                #     dist
-                #     ))
-
-                # simulation
-                sim_dl, sim_idx, self.sim_state.e, self.sim_state.e_th, sim_ai =\
-                    lqr_speed_steering_control(
-                    self.sim_state, self.sim_state.e, self.sim_state.e_th,
-                    dt,
-                    xs, ys, yaws,
-                    lqr_Q, lqr_R, L, target_v)
-
-                self.sim_state.x = self.sim_state.x + self.sim_state.v * math.cos(self.sim_state.yaw) * dt
-                self.sim_state.y = self.sim_state.y + self.sim_state.v * math.sin(self.sim_state.yaw) * dt
-                self.sim_state.yaw = self.sim_state.yaw + self.sim_state.v / L * math.tan(sim_dl) * dt
-                self.sim_state.v = self.sim_state.v + sim_ai * dt
-
-                self.step_path1.poses.append(xytheta_to_ps(
-                    self.sim_state.x,
-                    self.sim_state.y,
-                    self.sim_state.yaw,
-                    self.step_path1.poses[-1]))
-                self.step_pub1.publish(self.step_path1)
-
-                self.step_path2.poses.append(xytheta_to_ps(
-                    xs[sim_idx],
-                    ys[sim_idx],
-                    yaws[sim_idx],
-                    self.step_path2.poses[-1]))
-                self.step_pub2.publish(self.step_path2)
+                    lqr_Q, lqr_R, L, target_v, t,
+                    distance_traveled, cumsums, debug=False)
 
                 twist = Twist()
-                twist.linear.x = self.sim_state.v + (sim_ai * dt)
-                twist.angular.z = sim_dl * dt # not sure about this
+                twist.linear.x = self.state.v + (ai * dt)
+
+                # twist.angular.z = (dl - self.latest_xytheta[2]) / dt # not sure about this
+                twist.angular.z = self.state.v / L * math.tan(dl)
 
                 # clamp it down
                 # max_steer = np.deg2rad(180.0)
@@ -249,8 +244,9 @@ class LQRNode(Node):
                 #     sim_dl = max_steer
                 # if sim_dl <= - max_steer:
                 #     sim_dl = - max_steer
-                twist.linear.x = max(twist.linear.x, -0.5)
-                twist.linear.x = min(twist.linear.x, 0.5)
+
+                # twist.linear.x = max(twist.linear.x, -0.5)
+                # twist.linear.x = min(twist.linear.x, 0.5)
                 twist.angular.z = max(twist.angular.z, -0.5)
                 twist.angular.z = min(twist.angular.z, 0.5)
 
@@ -262,10 +258,68 @@ class LQRNode(Node):
 
                 self.vel_pub.publish(twist)
 
-                # time.sleep(dt)
+                dist = np.linalg.norm(
+                    self.latest_xytheta[:2] - np.array(xys[-1]),
+                    ord=2)
+                distance_traveled += dist
+
+                xys.append(
+                    np.array([self.latest_xytheta[0], self.latest_xytheta[1]])
+                )
+
+                # self.get_logger().warn("xy (%.3f, %.3f, %.3f), path_xy (%.3f, %.3f, %.3f), dist=%.3f" % (
+                #     self.state.x, self.state.y, self.state.yaw,
+                #     xs[idx], ys[idx], yaws[idx],
+                #     dist
+                #     ))
+
+                ############################################
+
+                # simulation
+                sim_dl, sim_idx, self.sim_state.e, self.sim_state.e_th, sim_ai, _, _ =\
+                    lqr_speed_steering_control(
+                    self.sim_state, self.sim_state.e, self.sim_state.e_th,
+                    dt,
+                    xs, ys, yaws,
+                    lqr_Q, lqr_R, L, target_v, t,
+                    distance_traveled, cumsums, debug=False)
+
+                self.sim_state.x = self.sim_state.x + self.sim_state.v * math.cos(self.sim_state.yaw) * dt
+                self.sim_state.y = self.sim_state.y + self.sim_state.v * math.sin(self.sim_state.yaw) * dt
+                self.sim_state.yaw = self.sim_state.yaw + self.sim_state.v / L * math.tan(sim_dl) * dt
+                self.sim_state.v = self.sim_state.v + sim_ai * dt
+
+                self.step_path1.poses.append(xytheta_to_ps(
+                    # self.sim_state.x,
+                    # self.sim_state.y,
+                    # self.sim_state.yaw,
+                    self.latest_xytheta[0],
+                    self.latest_xytheta[1],
+                    0.0,
+                    self.step_path1.poses[-1]))
+                self.step_pub1.publish(self.step_path1)
+
+                self.step_path2.poses.append(xytheta_to_ps(
+                    xs[sim_idx],
+                    ys[sim_idx],
+                    yaws[sim_idx],
+                    self.step_path2.poses[-1]))
+                self.step_pub2.publish(self.step_path2)
+
+                # distance_traveled += self.sim_state.v * dt
+
+                ############################################
+
+                time.sleep(dt)
+                t = t + dt
+
+                ############################################
 
                 ticks += 1
                 current = time.time()
+
+            self.vel_pub.publish(Twist())
+            time.sleep(1.0)
 
             self.get_logger().warn("BAILING!!!!")
 
