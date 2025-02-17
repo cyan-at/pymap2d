@@ -177,15 +177,20 @@ class SDFNode(Node):
 
         with self.transform_lock:
             if (not np.isnan(m1) and not np.isnan(m2) and (self.latest_homd2d is not None)):
+
+                # import ipdb; ipdb.set_trace()
+
                 payload = {
-                        'map' : sdf_map,
+                        'sdf_map' : sdf_map,
                         'g_map_basefootprint' : self.latest_homd2d,
                         'latest_xytheta' : self.latest_xytheta,
                         'msg' : sdf_msg,
-                        'range' : [m1, m2]
+                        'range' : [m1, m2],
+                        # 'map' : map_.occupancy()
+                        'map' : np.array(msg.data).reshape((msg.info.height, msg.info.width))
                     }
 
-                print("working...", file_name)
+                # print("working...", file_name)
                 # with open(file_name, 'wb') as f:
                 #     np.save(f, 
                 #         payload
