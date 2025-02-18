@@ -21,6 +21,7 @@ from geometry_msgs.msg import Twist
 target_v = 0.2
 
 from std_srvs.srv import Empty, Trigger
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 
 class LQRNode(Node):
     def __init__(self):
@@ -46,6 +47,8 @@ class LQRNode(Node):
         )
         self.rtn_lock = threading.Lock()
 
+        self.vel_twist = Twist()
+        self.stop_twist = Twist()
         self.vel_pub = self.create_publisher(
               Twist,
               '/cmd_vel',
@@ -88,6 +91,19 @@ class LQRNode(Node):
               '/active_plan',
               rclpy.qos.qos_profile_parameters)
 
+        self.debug_msg = Float32MultiArray()
+        self.debug_msg.layout.dim.append(MultiArrayDimension(
+            label='all', stride=11, size=1))
+        
+        self.debug_msg.layout.data_offset = 0
+
+        self.debug_msg.data = np.array([0.0] * 11)
+
+        self.debug_pub1 = self.create_publisher(
+              Float32MultiArray,
+              '/debug',
+              rclpy.qos.qos_profile_parameters)
+
     def rtn_vel_cb(self, msg):
         with self.rtn_lock:
             self.state.v = msg.linear.x
@@ -96,24 +112,27 @@ class LQRNode(Node):
         with self.path_lock:
             self.xythetas = path_to_xytheta(msg)
 
+        with self.transform_lock:
+            local_xytheta = self.latest_xytheta
+
         # reset
-        if self.sem_counter < 1 and self.latest_xytheta is not None:
+        if self.sem_counter < 1 and local_xytheta is not None:
             self.active_path = msg
 
             self.sim_state = State(
-                x=self.latest_xytheta[0],
-                y=self.latest_xytheta[1],
-                yaw=self.latest_xytheta[2],
+                x=local_xytheta[0],
+                y=local_xytheta[1],
+                yaw=local_xytheta[2],
                 v=0.0
             )
             self.step_path1.header = msg.header
             self.step_path1.poses = [
-                xytheta_to_ps(*self.latest_xytheta, msg)]
+                xytheta_to_ps(*local_xytheta, msg)]
             self.step_pub1.publish(self.step_path1)
 
             self.step_path2.header = msg.header
             self.step_path2.poses = [
-                xytheta_to_ps(*self.latest_xytheta, msg)]
+                xytheta_to_ps(*local_xytheta, msg)]
             self.step_pub2.publish(self.step_path2)
 
             self.state.e_th = 0.0
@@ -121,15 +140,15 @@ class LQRNode(Node):
 
             self.sem1.release()
             self.sem_counter += 1
-        else:
-            self.get_logger().warn(
-                "ignoring latest sdf_node path")
+        # else:
+        #     self.get_logger().warn(
+        #         "ignoring latest sdf_node path")
 
-        self.get_logger().warn("_value {}".format(
-            self.sem1._value))
+        # self.get_logger().warn("_value {}".format(
+        #     self.sem1._value))
 
-        self.get_logger().warn("len(xythetas) {}".format(
-            len(self.xythetas)))
+        # self.get_logger().warn("len(xythetas) {}".format(
+        #     len(self.xythetas)))
 
     def transform_thread(self):
         while self.running:
@@ -167,8 +186,8 @@ class LQRNode(Node):
         while self.running:
             self.sem1.acquire()
 
-            self.get_logger().warn("_value {}".format(
-                self.sem1._value))
+            # self.get_logger().warn("_value {}".format(
+            #     self.sem1._value))
 
             if self.xythetas is None:
                 self.get_logger().warn("killed!")
@@ -219,24 +238,24 @@ class LQRNode(Node):
                 pt = new_pt
             cumsums = np.array(cumsums)
 
-            xys = [self.latest_xytheta[:2]]
+            with self.transform_lock:
+                xys = [self.latest_xytheta[:2]]
             prior_dl = 0.0
 
             r2 = 0.5 # from contour.py
 
             while distance_traveled < r2 * max(1, len(xythetas) - 1):
-                dl, idx, self.state.e, self.state.e_th, ai, _, _ = lqr_speed_steering_control(
+                dl, idx, self.state.e, self.state.e_th, ai, expected_yaw, fb = lqr_speed_steering_control(
                     self.state, self.state.e, self.state.e_th,
                     dt,
                     xs, ys, yaws,
                     lqr_Q, lqr_R, L, target_v, t,
                     distance_traveled, cumsums, debug=False)
 
-                twist = Twist()
-                twist.linear.x = self.state.v + (ai * dt)
+                self.vel_twist.linear.x = self.state.v + (ai * dt)
 
                 # twist.angular.z = (dl - self.latest_xytheta[2]) / dt # not sure about this
-                twist.angular.z = self.state.v / L * math.tan(dl)
+                self.vel_twist.angular.z = self.state.v / L * math.tan(dl)
 
                 # clamp it down
                 # max_steer = np.deg2rad(180.0)
@@ -247,34 +266,25 @@ class LQRNode(Node):
 
                 # twist.linear.x = max(twist.linear.x, -0.5)
                 # twist.linear.x = min(twist.linear.x, 0.5)
-                twist.angular.z = max(twist.angular.z, -0.5)
-                twist.angular.z = min(twist.angular.z, 0.5)
+                self.vel_twist.angular.z = max(self.vel_twist.angular.z, -0.5)
+                self.vel_twist.angular.z = min(self.vel_twist.angular.z, 0.5)
 
-                # self.get_logger().warn("ai {}, dv: {}, v: {}, w: {}".format(
-                #     ai,
-                #     ai * dt,
-                #     twist.linear.x,
-                #     twist.angular.z))
+                self.vel_pub.publish(self.vel_twist)
 
-                self.vel_pub.publish(twist)
+                with self.transform_lock:
+                    new_xy = self.latest_xytheta[:2]
 
                 dist = np.linalg.norm(
-                    self.latest_xytheta[:2] - np.array(xys[-1]),
+                    new_xy - np.array(xys[-1]),
                     ord=2)
+                # print("DIST!!!", new_xy, np.array(xys[-1]), dist, idx)
                 distance_traveled += dist
 
-                xys.append(
-                    np.array([self.latest_xytheta[0], self.latest_xytheta[1]])
-                )
-
-                # self.get_logger().warn("xy (%.3f, %.3f, %.3f), path_xy (%.3f, %.3f, %.3f), dist=%.3f" % (
-                #     self.state.x, self.state.y, self.state.yaw,
-                #     xs[idx], ys[idx], yaws[idx],
-                #     dist
-                #     ))
+                xys.append(new_xy)
 
                 ############################################
 
+                '''
                 # simulation
                 sim_dl, sim_idx, self.sim_state.e, self.sim_state.e_th, sim_ai, _, _ =\
                     lqr_speed_steering_control(
@@ -288,21 +298,39 @@ class LQRNode(Node):
                 self.sim_state.y = self.sim_state.y + self.sim_state.v * math.sin(self.sim_state.yaw) * dt
                 self.sim_state.yaw = self.sim_state.yaw + self.sim_state.v / L * math.tan(sim_dl) * dt
                 self.sim_state.v = self.sim_state.v + sim_ai * dt
+                '''
+
+                ############################################
+
+                with self.rtn_lock:
+                    self.debug_msg.data[0] = self.state.v
+                self.debug_msg.data[1] = self.vel_twist.linear.x
+                self.debug_msg.data[2] = self.vel_twist.angular.z
+                self.debug_msg.data[3] = ai
+                self.debug_msg.data[4] = expected_yaw
+                with self.transform_lock:
+                    self.debug_msg.data[5] = self.latest_xytheta[2]
+                self.debug_msg.data[6] = self.state.e_th
+                self.debug_msg.data[7] = fb
+                # self.debug_msg.data[8] = self.vel_twist.angular.z # redundant
+                self.debug_msg.data[9] = dl
+                self.debug_msg.data[10] = self.state.e
+
+                ############################################
 
                 self.step_path1.poses.append(xytheta_to_ps(
                     # self.sim_state.x,
                     # self.sim_state.y,
                     # self.sim_state.yaw,
-                    self.latest_xytheta[0],
-                    self.latest_xytheta[1],
+                    *new_xy,
                     0.0,
                     self.step_path1.poses[-1]))
                 self.step_pub1.publish(self.step_path1)
 
                 self.step_path2.poses.append(xytheta_to_ps(
-                    xs[sim_idx],
-                    ys[sim_idx],
-                    yaws[sim_idx],
+                    xs[idx],
+                    ys[idx],
+                    yaws[idx],
                     self.step_path2.poses[-1]))
                 self.step_pub2.publish(self.step_path2)
 
@@ -318,7 +346,7 @@ class LQRNode(Node):
                 ticks += 1
                 current = time.time()
 
-            self.vel_pub.publish(Twist())
+            self.vel_pub.publish(self.stop_twist)
             time.sleep(1.0)
 
             self.get_logger().warn("BAILING!!!!")
