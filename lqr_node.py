@@ -21,7 +21,7 @@ from geometry_msgs.msg import Twist
 target_v = 0.2
 
 from std_srvs.srv import Empty, Trigger
-from std_msgs.msg import Float32MultiArray, MultiArrayDimension
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension, String
 
 class LQRNode(Node):
     def __init__(self):
@@ -98,10 +98,15 @@ class LQRNode(Node):
         self.debug_msg.layout.data_offset = 0
 
         self.debug_msg.data = np.array([0.0] * 11)
-
         self.debug_pub1 = self.create_publisher(
               Float32MultiArray,
-              '/debug',
+              '/debug1',
+              rclpy.qos.qos_profile_parameters)
+
+        self.debug_msg2 = String()
+        self.debug_pub2 = self.create_publisher(
+              String,
+              '/debug2',
               rclpy.qos.qos_profile_parameters)
 
     def rtn_vel_cb(self, msg):
@@ -315,6 +320,21 @@ class LQRNode(Node):
                 # self.debug_msg.data[8] = self.vel_twist.angular.z # redundant
                 self.debug_msg.data[9] = dl
                 self.debug_msg.data[10] = self.state.e
+                self.debug_pub1.publish(self.debug_msg)
+
+                self.debug_msg2.data = "%.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f" % (
+                    self.state.v,
+                    self.vel_twist.linear.x,
+                    self.vel_twist.angular.z,
+                    ai,
+                    expected_yaw,
+                    self.debug_msg.data[5],
+                    self.state.e_th,
+                    fb,
+                    dl,
+                    self.state.e
+                    )
+                self.debug_pub2.publish(self.debug_msg2)
 
                 ############################################
 
