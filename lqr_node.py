@@ -211,25 +211,50 @@ class LQRNode(Node):
             self.get_logger().warn("xythetas shape: {}".format(
                 xythetas.shape))
 
+            if xythetas.shape[0] == 1:
+                self.get_logger().warn("injecting dummy wpt to jog slam")
+                delta = 0.1
+                newrow = [xythetas[0, 0] + delta, xythetas[0, 1] + delta, xythetas[0, 2]]
+                xythetas = np.vstack([xythetas, newrow])
+
             ############################
 
             xs = interpolate(xythetas[:, 0], 40)
             ys = interpolate(xythetas[:, 1], 40)
 
+            # this is #important, the key is to set the yaw
+            # for a wpt to align with the next path segment
+            # ayaw = xythetas[:, 2]
+            # this, in combination with slerp3
+            ayaw = list(xythetas[1:, 2])
+            ayaw.append(xythetas[-1, 2]) # note: maintain alignment on last waypoint
+
+            # # INTERPOATION ROTAIONS SUCKS!
+            # yaws = [(x + np.pi) % (2 * np.pi) - np.pi for x in xythetas[:, 2]]
+            # yaws = rotation_smooth(yaws)
+            # # this is key
+            # # interpolating between -3.14 and 3.14 through 0 is spatially wrong
+            # yaws = interpolate(yaws, 40)
+
             # INTERPOATION ROTAIONS SUCKS!
-            yaws = [(x + np.pi) % (2 * np.pi) - np.pi for x in xythetas[:, 2]]
-            yaws = rotation_smooth(yaws)
+            cyaw = [(x + np.pi) % (2 * np.pi) - np.pi for x in ayaw]
+            cyaw = rotation_smooth(cyaw)
             # this is key
             # interpolating between -3.14 and 3.14 through 0 is spatially wrong
-            yaws = interpolate(yaws, 40)
+            # xys = [np.array([ax[i], ay[i]]) for i in range(len(ax))]
+
+            yaws = slerp3(cyaw, xythetas[:, :2], 40)
+            # cyaw = do_repeat(cyaw, 40)
+
+            print("len(cx)", len(xs))
+            print("len(cy)", len(ys))
+            print("len(cyaw)", len(yaws))
+            print("################################################")
 
             ############################
 
-            ticks = 0
             start = time.time()
 
-            t = 0.0
-            distance_traveled = 0.0
             distances = [] # len(cx) - 1
             cumsums = [0.0] # len(cx)
             i = 0
@@ -243,19 +268,47 @@ class LQRNode(Node):
                 pt = new_pt
             cumsums = np.array(cumsums)
 
-            with self.transform_lock:
-                xys = [self.latest_xytheta[:2]]
-            prior_dl = 0.0
+            t = 0.0
+            distance_traveled = 0.0
+            best_dist_estimate = 0.0
+            best_idx = 0
 
             r2 = 0.5 # from contour.py
 
-            while distance_traveled < r2 * max(1, len(xythetas) - 1):
-                dl, idx, self.state.e, self.state.e_th, ai, expected_yaw, fb = lqr_speed_steering_control(
+            if len(cumsums) >= 2:
+                terminate_dist = cumsums[-2]
+            # else:
+            #     print("GOAL: ", xs[0], ys[0], yaws[0])
+            #     tmp = np.array([xs[0], ys[0]])
+
+            #     with self.transform_lock:
+            #         print("CURRENT: ", self.latest_xytheta[:2])
+
+            #         tmp2 = np.linalg.norm(
+            #             tmp - self.latest_xytheta[:2], ord=2
+            #             )
+            #         print("DIST", tmp2)
+
+            #     terminate_dist = tmp2
+
+            ticks = 0
+
+            with self.transform_lock:
+                xys = [self.latest_xytheta[:2]]
+
+            # while distance_traveled < r2 * max(1, len(xythetas) - 1):
+            while terminate_dist > best_dist_estimate and (best_idx < len(xs) - 1):
+                dl, idx, self.state.e, self.state.e_th, ai, expected_yaw, fb, best_dist_estimate, best_idx = lqr_speed_steering_control(
                     self.state, self.state.e, self.state.e_th,
                     dt,
                     xs, ys, yaws,
                     lqr_Q, lqr_R, L, target_v, t,
                     distance_traveled, cumsums, debug=False)
+
+                # print("best_dist_estimate",
+                #     best_dist_estimate,
+                #     best_idx,
+                #     terminate_dist)
 
                 self.vel_twist.linear.x = self.state.v + (ai * dt)
 

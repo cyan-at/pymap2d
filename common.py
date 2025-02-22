@@ -246,3 +246,64 @@ def interpolate(arr, factor):
         i += 1
     res.append(arr[-1])
     return res
+
+def slerp3(arr, xys, factor):
+    res = []
+    i = 0
+    while i < len(arr) - 1:
+        diff = arr[i+1] - arr[i]
+
+        if (np.abs(diff) < 1e-8):
+            res.extend(
+                np.linspace(arr[i], arr[i+1], factor, endpoint=False)
+            )
+            i += 1
+            continue
+
+        # import ipdb; ipdb.set_trace()
+        distance = np.linalg.norm(xys[i+1] - xys[i], ord=2)
+
+        interp = []
+
+        min_t = np.abs(diff) / 0.5
+        min_d = min_t * 0.2 # target_v
+
+        # print("min_d", min_d)
+
+        # # sinusoidal interpolation
+        # for j in range(factor):
+        #     k = j / float(factor) # will never hit 1.0
+        #     a = 1-np.cos(np.pi*k)
+        #     v = arr[i] + diff * a
+        #     interp.append(v)
+
+        distance_traveled = 0.0
+        delta = np.abs(distance) / factor
+        # print("DELTA", delta)
+        # print("min_d", min_d)
+        for j in range(factor):
+            distance_traveled += delta
+
+            if (distance_traveled + min_d >= distance):
+                alpha = (distance_traveled - (distance - min_d)) / min_d
+                # print("ALPHA", alpha)
+                interp.append(arr[i] + alpha * diff)
+            else:
+                interp.append(arr[i])
+
+
+            # if j < factor * 0.9:
+            #     interp.append(arr[i])
+
+            # else:
+            #     v = arr[i+1]
+            #     interp.append(v)
+
+        res.extend(
+            interp
+            # np.linspace(arr[i], arr[i+1], factor, endpoint=False)
+        )
+        i += 1
+
+    res.append(arr[-1])
+    return res

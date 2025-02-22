@@ -20,7 +20,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 class SDFNode(Node):
-    def __init__(self):
+    def __init__(self, args):
         super().__init__('sdf_node')
 
         self.sdf_pub = self.create_publisher(
@@ -51,9 +51,12 @@ class SDFNode(Node):
             rclpy.qos.qos_profile_parameters,
         )
 
-        self.save_path = os.path.abspath("./")
-        self.get_logger().warn("save_path: {}".format(
-            self.save_path))
+        if len(args.path) > 0:
+            self.save_path = os.path.abspath(args.path)
+            self.get_logger().warn("save_path: {}".format(
+                self.save_path))
+        else:
+            self.save_path = None
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -165,13 +168,16 @@ class SDFNode(Node):
         sdf_msg.info.resolution = msg.info.resolution
         sdf_msg.info.origin = msg.info.origin
 
-        file_name, _ = Util.get_next_valid_name_increment(
-            self.save_path,
-            "sdf_map", 0, "", "npy")
+        file_name = None
+        path_name = None
+        if self.save_path is not None:
+            file_name, _ = Util.get_next_valid_name_increment(
+                self.save_path,
+                "sdf_map", 0, "", "npy")
 
-        path_name, _ = Util.get_next_valid_name_increment(
-            self.save_path,
-            "sdf_path", 0, "", "npy")
+            path_name, _ = Util.get_next_valid_name_increment(
+                self.save_path,
+                "sdf_path", 0, "", "npy")
 
         self.tf_sem.release()
 
@@ -196,21 +202,22 @@ class SDFNode(Node):
                 #         payload
                 #     )
 
-                all_homs, _ = contour_step(
-                    payload, iterations=50)
+                all_homs, _, _ = contour_step(
+                    payload, iterations=20) # fewer iters to prevent 'degeneracy'
 
                 path_msg = make_path_msg(
                     all_homs,
                     sdf_msg)
                 print("len()", len(all_homs))
 
-                payload = {
-                    "path" : all_homs
-                }
-                with open(path_name, 'wb') as f:
-                    np.save(f, 
-                        payload
-                    )
+                if path_name is not None:
+                    payload = {
+                        "path" : all_homs
+                    }
+                    with open(path_name, 'wb') as f:
+                        np.save(f, 
+                            payload
+                        )
 
                 self.sdf_queue.append((
                     sdf_msg,
@@ -221,7 +228,13 @@ class SDFNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    node = SDFNode()
+    parser = argparse.ArgumentParser(
+        description='')
+    parser.add_argument('--path',
+        type=str, help='path', default="")
+    args = parser.parse_args()
+
+    node = SDFNode(args)
 
     # th2 = threading.Thread(target=node.get_static_tf)
     # th2.start()

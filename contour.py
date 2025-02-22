@@ -160,7 +160,7 @@ def euler_from_quaternion(quaternion):
 def sample_sdf(
     g_map_basefootprint,
     radius, samplings,
-    A_tile, sdf_map):
+    A_tile, sdf_map, occupancy):
     xys = []
     sdf_values = []
     invalids = []
@@ -271,48 +271,62 @@ def contour_step(
     hom = g_map_basefootprint
     last_thetas = [np.pi]
     all_homs = [hom]
-    for iteration in range(iterations):
+
+    current_vals = [0.0]
+
+    for iteration in range(100):
         uv1 = np.dot(A_tile,
             hom[:, 2]).astype(np.int32)
-        # current = sdf_map[uv1[1], uv1[0]]
+        current = sdf_map[uv1[1], uv1[0]]
+
+        current_vals.append(current)
 
         xys_1, sdf_sampling_1 = sample_sdf(
             hom,
             r1, samplings,
-            A_tile, sdf_map)
+            A_tile, sdf_map, occupancy)
 
         xys_2, sdf_sampling_2 = sample_sdf(
             hom,
             r2, samplings,
-            A_tile, sdf_map)
+            A_tile, sdf_map, occupancy)
 
         # xys_3, sdf_sampling_3 = sample_sdf(
         #     hom,
         #     r3, samplings,
-        #     A_tile, sdf_map)
+        #     A_tile, sdf_map, occupancy)
 
         ################################
 
+        # turn_gain = max(-1.0, -np.abs(last_thetas[-1]))
         turn_gain = -np.abs(last_thetas[-1])
         # turn_gain = -1.0 # -np.abs(last_thetas[-1])
         turn_cost = turn_gain * sdf_sampling_1[:, 0]**2
+
+        '''
         cost_1 = sdf_sampling_1[:, 1] * 1
         cost_2 = sdf_sampling_2[:, 1] * 2
         cost_3 = 0
         # cost_3 = sdf_sampling_3[:, 1] * 3
         # cost_3 = 0.0 # - 1 / np.abs(sdf_sampling_2[:, 1])
         formulation = cost_1 + cost_2 + cost_3 + turn_cost
+        '''
+        # hunting to the max target => 'cross open-spaces'/ 'tourism'
 
         # hunting to a specific target => 'wall-hugging'
-        # hutnting to the max target => 'cross open-spaces'/ 'tourism'
-
         target = np.max(sdf_sampling_2[:, 1])
+        target = min(target, 1.5)
+        target = max(target, 0.8)
+        # the 'wall-hugging zone', stay in it
+        # if space opens up ahead, take the gap
         # make it clamped and dynamic
         # so in tight spaces you aren't hunting for something unattainable
         # and in open spaces you aren't being a 'tourist'
         # clamp it between these 2
-        target = min(target, 2.0)
-        target = max(target, 0.5)
+
+        # to prevent rapid changes, take on step to it
+        # complementary / lpf'd
+        target = current + (target - current) * 0.1
 
         cost_1 = 1 / (1 + np.abs(target - sdf_sampling_1[:, 1]))
         # rewarding future distances => smoother / correct paths
@@ -348,7 +362,7 @@ def contour_step(
 
         # this adds some perturbations
         # keeps it from limit-cycling exactly
-        r = 5
+        r = 5 # don't make this too large, otherwise it gets stuck
         for u in range(uv1[0] - r, uv1[0] + r):
             for v in range(uv1[1] - r, uv1[1] + r):
                 if v >= sdf_map.shape[0] or u >= sdf_map.shape[1]:
@@ -358,11 +372,12 @@ def contour_step(
                 #     continue
 
                 try:
-                    sdf_map[v, u] -= 1.0
+                    sdf_map[v, u] -= 1.0 # don't make this too low
 
                     # print(occupancy[v, u])
                     if occupancy[v, u] == 50:
                         unknown_found = True
+                        pass
                 except:
                     print("index problem")
 
@@ -378,7 +393,7 @@ def contour_step(
 
         last_thetas.append(best_theta)
 
-    return all_homs, last_thetas
+    return all_homs, last_thetas, current_vals
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='')
@@ -388,7 +403,7 @@ if __name__ == '__main__':
     with open(args.file, 'rb') as f:
         sdf_map = np.load(f, allow_pickle=True)
 
-    all_homs, last_thetas = contour_step(sdf_map.tolist())
+    all_homs, last_thetas, current_vals = contour_step(sdf_map.tolist())
 
     tmp = sdf_map.tolist()
     sdf_map = tmp["sdf_map"]
@@ -617,6 +632,8 @@ if __name__ == '__main__':
 
     ax1.plot(np.array(last_thetas))
 
+    ax2.plot(np.array(current_vals))
+
     ################################
 
     # m1 = np.min(sdf_map)
@@ -644,15 +661,15 @@ if __name__ == '__main__':
 
     ################################
 
-    # im_handle = ax3.imshow(sdf_map, alpha=0.1)
-    # im_handle.set_extent([
-    #     min([x_min, g_world_map[0, 2]]),
-    #     x_max,
-    #     min([y_min, g_world_map[1, 2]]),
-    #     y_max
-    # ])
+    im_handle = ax3.imshow(sdf_map, alpha=0.7)
+    im_handle.set_extent([
+        min([x_min, g_world_map[0, 2]]),
+        x_max,
+        min([y_min, g_world_map[1, 2]]),
+        y_max
+    ])
 
-    im_handle2 = ax3.imshow(occupancy, alpha=0.9, cmap='gray')
+    im_handle2 = ax3.imshow(occupancy, alpha=0.5, cmap='gray')
     im_handle2.set_extent([
         min([x_min, g_world_map[0, 2]]),
         x_max,
