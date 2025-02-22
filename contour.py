@@ -2,26 +2,14 @@
 
 
 from threading import Thread, Lock, Condition
-import rclpy
-from rclpy.node import Node
-from tf_transformations import euler_from_quaternion
 
 import numpy as np, math, sys
 
-from tf2_ros import TransformException
-from tf2_ros.buffer import Buffer
-from tf2_ros.transform_listener import TransformListener
-
-from rcl_interfaces.msg import SetParametersResult
-
-from nav_msgs.msg import OccupancyGrid
 import CMap2D
 
 from collections import deque
 
 import threading
-
-from nav_msgs.msg import MapMetaData
 
 import os, sys, time
 
