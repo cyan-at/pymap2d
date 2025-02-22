@@ -213,8 +213,9 @@ class LQRNode(Node):
 
             if xythetas.shape[0] == 1:
                 self.get_logger().warn("injecting dummy wpt to jog slam")
-                delta = 0.1
-                newrow = [xythetas[0, 0] + delta, xythetas[0, 1] + delta, xythetas[0, 2]]
+                # dxdy = np.random.rand(1, 2) * 0.1 - 0.05
+                dxdy = np.random.rand(1, 2) * 0.05
+                newrow = [xythetas[0, 0] + dxdy[0], xythetas[0, 1] + dxdy[1], xythetas[0, 2]]
                 xythetas = np.vstack([xythetas, newrow])
 
             ############################
