@@ -432,9 +432,6 @@ def main(args=None):
 
     node = LQRNode()
 
-    # th2 = threading.Thread(target=node.get_static_tf)
-    # th2.start()
-
     th3 = threading.Thread(target=node.transform_thread)
     th3.start()
 
@@ -459,7 +456,6 @@ def main(args=None):
         node.destroy_node()
 
     th1.join()
-    # th2.join()
     th3.join()
 
 if __name__ == '__main__':
